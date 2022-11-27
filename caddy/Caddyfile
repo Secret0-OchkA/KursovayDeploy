@@ -1,0 +1,49 @@
+:3000 {
+    reverse_proxy grafana:3000  
+}
+
+:8080 {
+    basicauth /* {
+        {$ADMIN_USER} {$ADMIN_PASSWORD_HASH}
+    }    
+    reverse_proxy cadvisor:8080
+}
+
+:9090 {
+    basicauth /* {
+        {$ADMIN_USER} {$ADMIN_PASSWORD_HASH}
+    }
+    reverse_proxy prometheus:9090
+}
+
+:9091 {
+    basicauth /* {
+        {$ADMIN_USER} {$ADMIN_PASSWORD_HASH}
+    }    
+    reverse_proxy pushgateway:9091
+}
+
+:9092 {
+    reverse_proxy api:80  
+}
+
+:9093 {
+    basicauth /* {
+        {$ADMIN_USER} {$ADMIN_PASSWORD_HASH}
+    }
+    reverse_proxy postgresdb:5432  
+}
+
+:9094 {
+    basicauth /* {
+        {$ADMIN_USER} {$ADMIN_PASSWORD_HASH}
+    }
+    reverse_proxy node_client:3000  
+}
+
+:9095 {
+    basicauth /* {
+        {$ADMIN_USER} {$ADMIN_PASSWORD_HASH}
+    }
+    reverse_proxy pgadmin:80  
+}

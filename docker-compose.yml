@@ -1,0 +1,193 @@
+version: '2.1'
+
+networks:
+  kursovay-net:
+    driver: bridge
+
+volumes:
+  prometheus_data: {}
+  grafana_data: {}
+  postgres:
+    driver: local
+
+services:
+
+  prometheus:
+    image: prom/prometheus:v2.40.1
+    container_name: prometheus
+    volumes:
+      - ./prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    expose:
+      - 9090
+    networks:
+      - kursovay-net
+    labels:
+      org.label-schema.group: "monitoring"
+
+  nodeexporter:
+    image: prom/node-exporter:v1.4.0
+    container_name: nodeexporter
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    restart: unless-stopped
+    expose:
+      - 9100
+    networks:
+      - kursovay-net
+    labels:
+      org.label-schema.group: "monitoring"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.46.0
+    container_name: cadvisor
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      #- /cgroup:/cgroup:ro #doesn't work on MacOS only for Linux
+    restart: unless-stopped
+    expose:
+      - 8080
+    networks:
+      - kursovay-net
+    labels:
+      org.label-schema.group: "monitoring"
+
+  grafana:
+    image: grafana/grafana:9.2.4
+    container_name: grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+    environment:
+      - GF_SECURITY_ADMIN_USER=${ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    restart: unless-stopped
+    expose:
+      - 3000
+    networks:
+      - kursovay-net
+    labels:
+      org.label-schema.group: "monitoring"
+
+  pushgateway:
+    image: prom/pushgateway:v1.4.3
+    container_name: pushgateway
+    restart: unless-stopped
+    expose:
+      - 9091
+    networks:
+      - kursovay-net
+    labels:
+      org.label-schema.group: "monitoring"
+
+  caddy:
+    #todo make ports
+    image: caddy:2.6.2
+    container_name: caddy
+    ports:
+      - "3000:3000" #grafana
+      - "8080:8080" #cadvisor
+      - "9090:9090" #prometheus
+      - "9091:9091" #pushgateway
+      - "49151:9092" #api
+      - "9093:9093" #postgresdb
+      - "9094:9094" #node_client
+      - "9095:9095" #pgadmin
+      - "9100:9100" #nodeexporter
+    volumes:
+      - ./caddy:/etc/caddy
+    environment:
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH:-$2a$14$1l.IozJx7xQRVmlkEQ32OeEEfP5mRxTpbDTCTcXRqn19gXD8YK1pO}
+    restart: unless-stopped
+    networks:
+      - kursovay-net
+    labels:
+      org.label-schema.group: "monitoring"
+
+  postgres:
+    container_name: postgresdb
+    image: postgres:13.3
+    environment:
+      POSTGRES_DB: "apidb"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "secretochka2442"
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d apidb" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 4G
+    networks:
+      - kursovay-net
+    labels:
+      org.label-schema.group: "worker"
+
+  pgadmin:
+    container_name: pgadmin
+    image: dpage/pgadmin4:5.7
+    environment:
+      PGADMIN_DEFAULT_EMAIL: "scretochka@yandex.ru"
+      PGADMIN_DEFAULT_PASSWORD: "secretochka2442"
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    volumes:
+      - ./backups:/etc/pgadmin/backups
+    depends_on:
+      - postgres
+    networks:
+      - kursovay-net
+    labels:
+      org.label-schema.group: "worker"
+
+  api:
+    container_name: api
+    image: secretochka/api-kursovay:2.2
+    depends_on:
+      - postgres
+    networks:
+      - kursovay-net
+    labels:
+      org.label-schema.group: "worker"
+
+  node_client:
+    container_name: node_client
+    image: secretochka/node-api-client:1.0
+    depends_on:
+      - api
+    networks:
+      - kursovay-net
+    labels:
+      org.label-schema.group: "worker"
